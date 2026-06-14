@@ -19,14 +19,21 @@ use crate::common::auth;
 pub struct AdminState {
     /// Admin API 密钥
     pub admin_api_key: String,
+    /// 服务 API 密钥
+    pub service_api_key: String,
     /// Admin 服务
     pub service: Arc<AdminService>,
 }
 
 impl AdminState {
-    pub fn new(admin_api_key: impl Into<String>, service: AdminService) -> Self {
+    pub fn new(
+        admin_api_key: impl Into<String>,
+        service_api_key: impl Into<String>,
+        service: AdminService,
+    ) -> Self {
         Self {
             admin_api_key: admin_api_key.into(),
+            service_api_key: service_api_key.into(),
             service: Arc::new(service),
         }
     }

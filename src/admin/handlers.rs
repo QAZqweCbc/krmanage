@@ -9,10 +9,17 @@ use axum::{
 use super::{
     middleware::AdminState,
     types::{
-        AddCredentialRequest, SetDisabledRequest, SetLoadBalancingModeRequest, SetPriorityRequest,
-        SuccessResponse,
+        AddCredentialRequest, BootstrapKeysResponse, SetDisabledRequest, SetEmailRequest,
+        SetLoadBalancingModeRequest, SetPriorityRequest, SuccessResponse,
     },
 };
+
+pub async fn get_bootstrap_keys(State(state): State<AdminState>) -> impl IntoResponse {
+    Json(BootstrapKeysResponse::new(
+        state.service_api_key,
+        state.admin_api_key,
+    ))
+}
 
 /// GET /api/admin/credentials
 /// 获取所有凭据状态
@@ -50,6 +57,19 @@ pub async fn set_credential_priority(
             id, payload.priority
         )))
         .into_response(),
+        Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
+    }
+}
+
+/// POST /api/admin/credentials/:id/email
+/// 设置凭据邮箱
+pub async fn set_credential_email(
+    State(state): State<AdminState>,
+    Path(id): Path<u64>,
+    Json(payload): Json<SetEmailRequest>,
+) -> impl IntoResponse {
+    match state.service.set_email(id, payload.email) {
+        Ok(_) => Json(SuccessResponse::new(format!("凭据 #{} 邮箱已更新", id))).into_response(),
         Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
     }
 }

@@ -1,4 +1,9 @@
 // 凭据状态响应
+export interface BootstrapKeysResponse {
+  apiKey: string
+  adminApiKey: string
+}
+
 export interface CredentialsStatusResponse {
   total: number
   available: number
@@ -61,6 +66,10 @@ export interface SetDisabledRequest {
 
 export interface SetPriorityRequest {
   priority: number
+}
+
+export interface SetEmailRequest {
+  email?: string
 }
 
 // 添加凭据请求

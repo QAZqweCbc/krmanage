@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { RefreshCw, ChevronUp, ChevronDown, Wallet, Trash2, Loader2 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Progress } from '@/components/ui/progress'
 import {
   Dialog,
   DialogContent,
@@ -16,8 +17,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import type { CredentialStatusItem, BalanceResponse } from '@/types/api'
+import { formatTokenCountdown } from '@/lib/token-countdown'
 import {
   useSetDisabled,
+  useSetEmail,
   useSetPriority,
   useResetFailure,
   useDeleteCredential,
@@ -59,13 +62,36 @@ export function CredentialCard({
 }: CredentialCardProps) {
   const [editingPriority, setEditingPriority] = useState(false)
   const [priorityValue, setPriorityValue] = useState(String(credential.priority))
+  const [editingEmail, setEditingEmail] = useState(false)
+  const [emailValue, setEmailValue] = useState(credential.email || '')
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [currentTime, setCurrentTime] = useState(() => new Date())
 
   const setDisabled = useSetDisabled()
+  const setEmail = useSetEmail()
   const setPriority = useSetPriority()
   const resetFailure = useResetFailure()
   const deleteCredential = useDeleteCredential()
   const forceRefresh = useForceRefreshToken()
+  const tokenCountdown = formatTokenCountdown({
+    expiresAt: credential.expiresAt,
+    lastUsedAt: credential.lastUsedAt,
+    now: currentTime,
+  })
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setCurrentTime(new Date())
+    }, 1000)
+
+    return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    if (!editingEmail) {
+      setEmailValue(credential.email || '')
+    }
+  }, [credential.email, editingEmail])
 
   const handleToggleDisabled = () => {
     setDisabled.mutate(
@@ -123,6 +149,27 @@ export function CredentialCard({
     })
   }
 
+  const handleEmailChange = () => {
+    const normalizedEmail = emailValue.trim()
+    if (normalizedEmail && !normalizedEmail.includes('@')) {
+      toast.error('邮箱格式不正确')
+      return
+    }
+
+    setEmail.mutate(
+      { id: credential.id, email: normalizedEmail || undefined },
+      {
+        onSuccess: (res) => {
+          toast.success(res.message)
+          setEditingEmail(false)
+        },
+        onError: (err) => {
+          toast.error('更新邮箱失败: ' + (err as Error).message)
+        },
+      }
+    )
+  }
+
   const handleDelete = () => {
     if (!credential.disabled) {
       toast.error('请先禁用凭据再删除')
@@ -152,7 +199,57 @@ export function CredentialCard({
                 onCheckedChange={onToggleSelect}
               />
               <CardTitle className="text-lg flex items-center gap-2">
-                {credential.email || `凭据 #${credential.id}`}
+                {editingEmail ? (
+                  <span className="flex items-center gap-1">
+                    <Input
+                      value={emailValue}
+                      onChange={(e) => setEmailValue(e.target.value)}
+                      className="h-7 w-44 text-sm"
+                      placeholder="邮箱名"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          handleEmailChange()
+                        }
+                        if (e.key === 'Escape') {
+                          setEditingEmail(false)
+                          setEmailValue(credential.email || '')
+                        }
+                      }}
+                    />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs"
+                      onClick={handleEmailChange}
+                      disabled={setEmail.isPending}
+                    >
+                      保存
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => {
+                        setEditingEmail(false)
+                        setEmailValue(credential.email || '')
+                      }}
+                    >
+                      取消
+                    </Button>
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2">
+                    <span>{credential.email || `凭据 #${credential.id}`}</span>
+                    <button
+                      type="button"
+                      className="text-xs font-normal text-muted-foreground hover:text-foreground"
+                      onClick={() => setEditingEmail(true)}
+                    >
+                      {credential.email ? '编辑' : '编辑邮箱'}
+                    </button>
+                  </span>
+                )}
                 {credential.isCurrent && (
                   <Badge variant="success">当前</Badge>
                 )}
@@ -254,9 +351,26 @@ export function CredentialCard({
               <span className="text-muted-foreground">成功次数：</span>
               <span className="font-medium">{credential.successCount}</span>
             </div>
+            <div className="col-span-2 flex items-center gap-2">
+              <span className="text-muted-foreground">邮箱：</span>
+              <span className="font-medium">{credential.email || '未设置'}</span>
+              <button
+                type="button"
+                className="text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => setEditingEmail(true)}
+              >
+                {credential.email ? '编辑' : '编辑邮箱'}
+              </button>
+            </div>
             <div className="col-span-2">
               <span className="text-muted-foreground">最后调用：</span>
               <span className="font-medium">{formatLastUsed(credential.lastUsedAt)}</span>
+            </div>
+            <div className="col-span-2">
+              <span className="text-muted-foreground">Token 倒计时：</span>
+              <span className={tokenCountdown === '已过期' ? 'font-medium text-amber-500' : 'font-medium'}>
+                {tokenCountdown}
+              </span>
             </div>
             {credential.maskedApiKey && (
               <div className="col-span-2">
@@ -264,21 +378,30 @@ export function CredentialCard({
                 <span className="font-mono font-medium">{credential.maskedApiKey}</span>
               </div>
             )}
-            <div className="col-span-2">
-              <span className="text-muted-foreground">剩余用量：</span>
-              {loadingBalance ? (
-                <span className="text-sm ml-1">
-                  <Loader2 className="inline w-3 h-3 animate-spin" /> 加载中...
-                </span>
-              ) : balance ? (
-                <span className="font-medium ml-1">
-                  {balance.remaining.toFixed(2)} / {balance.usageLimit.toFixed(2)}
-                  <span className="text-xs text-muted-foreground ml-1">
-                    ({(100 - balance.usagePercentage).toFixed(1)}% 剩余)
+            <div className="col-span-2 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground">使用进度：</span>
+                {loadingBalance ? (
+                  <span className="text-xs text-muted-foreground">
+                    <Loader2 className="inline w-3 h-3 animate-spin" /> 查询中...
                   </span>
-                </span>
-              ) : (
-                <span className="text-sm text-muted-foreground ml-1">未知</span>
+                ) : balance ? (
+                  <span className="text-xs text-muted-foreground">
+                    {balance.currentUsage.toFixed(2)} / {balance.usageLimit.toFixed(2)}
+                    <span className="ml-1">({balance.usagePercentage.toFixed(1)}%)</span>
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">未知</span>
+                )}
+              </div>
+              <Progress
+                value={balance?.usagePercentage || 0}
+                className={loadingBalance ? 'opacity-70' : ''}
+              />
+              {balance && (
+                <div className="text-xs text-muted-foreground">
+                  剩余 {balance.remaining.toFixed(2)}（{(100 - balance.usagePercentage).toFixed(1)}%）
+                </div>
               )}
             </div>
             {credential.hasProxy && (
