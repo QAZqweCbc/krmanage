@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -112,6 +113,14 @@ pub struct Config {
     /// 配置文件路径（运行时元数据，不写入 JSON）
     #[serde(skip)]
     config_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartupRegistration {
+    pub api_key: String,
+    pub admin_api_key: String,
+    pub created_api_key: bool,
+    pub created_admin_api_key: bool,
 }
 
 fn default_host() -> String {
@@ -230,6 +239,37 @@ impl Config {
         self.config_path.as_deref()
     }
 
+    pub fn ensure_startup_registration(&mut self) -> anyhow::Result<StartupRegistration> {
+        let created_api_key = self
+            .api_key
+            .as_deref()
+            .map(|v| v.trim().is_empty())
+            .unwrap_or(true);
+        if created_api_key {
+            self.api_key = Some(generate_api_key("sk-kiro-rs"));
+        }
+
+        let created_admin_api_key = self
+            .admin_api_key
+            .as_deref()
+            .map(|v| v.trim().is_empty())
+            .unwrap_or(true);
+        if created_admin_api_key {
+            self.admin_api_key = Some(generate_api_key("sk-kiro-admin"));
+        }
+
+        if created_api_key || created_admin_api_key {
+            self.save()?;
+        }
+
+        Ok(StartupRegistration {
+            api_key: self.api_key.clone().unwrap_or_default(),
+            admin_api_key: self.admin_api_key.clone().unwrap_or_default(),
+            created_api_key,
+            created_admin_api_key,
+        })
+    }
+
     /// 将当前配置写回原始配置文件
     pub fn save(&self) -> anyhow::Result<()> {
         let path = self
@@ -241,5 +281,48 @@ impl Config {
         fs::write(path, content)
             .with_context(|| format!("写入配置文件失败: {}", path.display()))?;
         Ok(())
+    }
+}
+
+fn generate_api_key(prefix: &str) -> String {
+    format!("{}-{}", prefix, Uuid::new_v4().simple())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+    use uuid::Uuid;
+
+    #[test]
+    fn startup_registration_generates_missing_runtime_keys_and_saves_them() {
+        let config_path = std::env::temp_dir().join(format!(
+            "kiro-rs-startup-registration-{}.json",
+            Uuid::new_v4()
+        ));
+        let _ = std::fs::remove_file(&config_path);
+
+        let mut config = Config::load(&config_path).expect("load default config");
+        let registration = config
+            .ensure_startup_registration()
+            .expect("ensure startup registration");
+
+        assert!(registration.created_api_key);
+        assert!(registration.created_admin_api_key);
+        assert_eq!(
+            config.api_key.as_deref(),
+            Some(registration.api_key.as_str())
+        );
+        assert_eq!(
+            config.admin_api_key.as_deref(),
+            Some(registration.admin_api_key.as_str())
+        );
+        assert!(registration.api_key.starts_with("sk-kiro-rs-"));
+        assert!(registration.admin_api_key.starts_with("sk-kiro-admin-"));
+
+        let reloaded = Config::load(&config_path).expect("reload saved config");
+        assert_eq!(reloaded.api_key, config.api_key);
+        assert_eq!(reloaded.admin_api_key, config.admin_api_key);
+
+        let _ = std::fs::remove_file(&config_path);
     }
 }

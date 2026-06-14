@@ -1785,6 +1785,25 @@ impl MultiTokenManager {
         Ok(())
     }
 
+    /// 设置凭据邮箱（Admin API）
+    pub fn set_email(&self, id: u64, email: Option<String>) -> anyhow::Result<()> {
+        let normalized_email = email
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+
+        {
+            let mut entries = self.entries.lock();
+            let entry = entries
+                .iter_mut()
+                .find(|e| e.id == id)
+                .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?;
+            entry.credentials.email = normalized_email;
+        }
+
+        self.persist_credentials()?;
+        Ok(())
+    }
+
     /// 重置凭据失败计数并重新启用（Admin API）
     pub fn reset_and_enable(&self, id: u64) -> anyhow::Result<()> {
         {
@@ -2123,14 +2142,24 @@ impl MultiTokenManager {
     /// 无条件调用上游 API 重新获取 access token，不检查是否过期。
     /// 适用于排查问题、Token 异常但未过期、主动更新凭据状态等场景。
     pub async fn force_refresh_token_for(&self, id: u64) -> anyhow::Result<()> {
-        let credentials = {
+        let (credentials, quota_recovery_at) = {
             let entries = self.entries.lock();
-            entries
+            let entry = entries
                 .iter()
                 .find(|e| e.id == id)
-                .map(|e| e.credentials.clone())
-                .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?
+                .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?;
+            (entry.credentials.clone(), entry.quota_recovery_at)
         };
+
+        if let Some(recovery_at) = quota_recovery_at {
+            if recovery_at > Utc::now() {
+                anyhow::bail!(
+                    "凭据 #{} 额度未恢复，跳过 Token 刷新；将在 {} 后恢复使用",
+                    id,
+                    recovery_at.to_rfc3339()
+                );
+            }
+        }
 
         // 获取刷新锁防止并发刷新
         let _guard = self.refresh_lock.lock().await;
@@ -2460,6 +2489,34 @@ mod tests {
         .unwrap()
     }
 
+    #[test]
+    fn test_set_email_updates_snapshot() {
+        let manager = manager_with_api_keys();
+
+        manager
+            .set_email(1, Some("user@example.com".to_string()))
+            .unwrap();
+
+        let first = manager
+            .snapshot()
+            .entries
+            .into_iter()
+            .find(|e| e.id == 1)
+            .unwrap();
+        assert_eq!(first.email, Some("user@example.com".to_string()));
+    }
+
+    fn oauth_credential(id: u64, priority: u32) -> KiroCredentials {
+        KiroCredentials {
+            id: Some(id),
+            access_token: Some(format!("access-token-{}", id)),
+            refresh_token: Some("a".repeat(150)),
+            expires_at: Some((Utc::now() + Duration::hours(1)).to_rfc3339()),
+            priority,
+            ..Default::default()
+        }
+    }
+
     #[tokio::test]
     async fn test_needs_refresh_skips_account_and_reset_clears_state() {
         let manager = manager_with_api_keys();
@@ -2529,6 +2586,32 @@ mod tests {
             .find(|e| e.id == 1)
             .unwrap();
         assert_eq!(first.quota_recovery_at, Some(recovery_at.to_rfc3339()));
+    }
+
+    #[tokio::test]
+    async fn test_quota_recovery_blocks_forced_refresh_until_recovered() {
+        let manager = MultiTokenManager::new(
+            Config::default(),
+            vec![oauth_credential(1, 0), oauth_credential(2, 1)],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        let recovery_at = Utc::now() + Duration::hours(1);
+        assert!(manager.mark_quota_recovery(1, recovery_at, Some(402), "monthly quota exhausted"));
+
+        let err = manager
+            .force_refresh_token_for(1)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("额度未恢复"),
+            "强制刷新应被额度恢复时间拦截，实际错误: {}",
+            err
+        );
     }
 
     #[tokio::test]

@@ -1,10 +1,12 @@
 import axios from 'axios'
 import { storage } from '@/lib/storage'
 import type {
+  BootstrapKeysResponse,
   CredentialsStatusResponse,
   BalanceResponse,
   SuccessResponse,
   SetDisabledRequest,
+  SetEmailRequest,
   SetPriorityRequest,
   AddCredentialRequest,
   AddCredentialResponse,
@@ -21,14 +23,19 @@ const api = axios.create({
 
 // 请求拦截器添加 API Key
 api.interceptors.request.use((config) => {
-  const apiKey = storage.getApiKey()
-  if (apiKey) {
-    config.headers['x-api-key'] = apiKey
+  const adminApiKey = storage.getAdminApiKey()
+  if (adminApiKey) {
+    config.headers['x-api-key'] = adminApiKey
   }
   return config
 })
 
 // 获取所有凭据状态
+export async function getBootstrapKeys(): Promise<BootstrapKeysResponse> {
+  const { data } = await api.get<BootstrapKeysResponse>('/bootstrap')
+  return data
+}
+
 export async function getCredentials(): Promise<CredentialsStatusResponse> {
   const { data } = await api.get<CredentialsStatusResponse>('/credentials')
   return data
@@ -54,6 +61,17 @@ export async function setCredentialPriority(
   const { data } = await api.post<SuccessResponse>(
     `/credentials/${id}/priority`,
     { priority } as SetPriorityRequest
+  )
+  return data
+}
+
+export async function setCredentialEmail(
+  id: number,
+  email?: string
+): Promise<SuccessResponse> {
+  const { data } = await api.post<SuccessResponse>(
+    `/credentials/${id}/email`,
+    { email } as SetEmailRequest
   )
   return data
 }

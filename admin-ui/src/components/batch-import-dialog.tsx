@@ -19,6 +19,7 @@ interface BatchImportDialogProps {
 }
 
 interface CredentialInput {
+  email?: string
   refreshToken?: string
   clientId?: string
   clientSecret?: string
@@ -228,6 +229,7 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
             // API Key 凭据
             const addedCred = await addCredential({
               authMethod: 'api_key',
+              email: cred.email?.trim() || undefined,
               kiroApiKey: cred.kiroApiKey?.trim(),
               priority: cred.priority || 0,
               authRegion: cred.authRegion?.trim() || cred.region?.trim() || undefined,
@@ -276,6 +278,7 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
           const addedCred = await addCredential({
             refreshToken: token,
             authMethod,
+            email: cred.email?.trim() || undefined,
             authRegion: cred.authRegion?.trim() || cred.region?.trim() || undefined,
             apiRegion: cred.apiRegion?.trim() || undefined,
             clientId,

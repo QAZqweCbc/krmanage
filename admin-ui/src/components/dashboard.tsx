@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { RefreshCw, LogOut, Moon, Sun, Server, Plus, Upload, FileUp, Trash2, RotateCcw, CheckCircle2, Download } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -39,6 +39,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const [batchRefreshing, setBatchRefreshing] = useState(false)
   const [batchRefreshProgress, setBatchRefreshProgress] = useState({ current: 0, total: 0 })
   const cancelVerifyRef = useRef(false)
+  const autoQueriedBalanceIdsRef = useRef<Set<number>>(new Set())
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 12
   const [darkMode, setDarkMode] = useState(() => {
@@ -61,7 +62,10 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const totalPages = Math.ceil((data?.credentials.length || 0) / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
   const endIndex = startIndex + itemsPerPage
-  const currentCredentials = data?.credentials.slice(startIndex, endIndex) || []
+  const currentCredentials = useMemo(
+    () => data?.credentials.slice(startIndex, endIndex) || [],
+    [data?.credentials, startIndex, endIndex]
+  )
   const disabledCredentialCount = data?.credentials.filter(credential => credential.disabled).length || 0
   const selectedDisabledCount = Array.from(selectedIds).filter(id => {
     const credential = data?.credentials.find(c => c.id === id)
@@ -78,10 +82,16 @@ export function Dashboard({ onLogout }: DashboardProps) {
     if (!data?.credentials) {
       setBalanceMap(new Map())
       setLoadingBalanceIds(new Set())
+      autoQueriedBalanceIdsRef.current.clear()
       return
     }
 
     const validIds = new Set(data.credentials.map(credential => credential.id))
+    autoQueriedBalanceIdsRef.current.forEach(id => {
+      if (!validIds.has(id)) {
+        autoQueriedBalanceIdsRef.current.delete(id)
+      }
+    })
 
     setBalanceMap(prev => {
       const next = new Map<number, BalanceResponse>()
@@ -123,7 +133,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
   }
 
   const handleLogout = () => {
-    storage.removeApiKey()
+    storage.removeAdminApiKey()
     queryClient.clear()
     onLogout()
   }
@@ -342,22 +352,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
     deselectAll()
   }
 
-  // 查询当前页凭据信息（逐个查询，避免瞬时并发）
-  const handleQueryCurrentPageInfo = async () => {
-    if (currentCredentials.length === 0) {
-      toast.error('当前页没有可查询的凭据')
-      return
-    }
-
-    const ids = currentCredentials
-      .filter(credential => !credential.disabled)
-      .map(credential => credential.id)
-
-    if (ids.length === 0) {
-      toast.error('当前页没有可查询的启用凭据')
-      return
-    }
-
+  // 逐个查询余额，避免瞬时并发导致上游限流。
+  const queryCredentialBalances = async (ids: number[], showToast: boolean) => {
     setQueryingInfo(true)
     setQueryInfoProgress({ current: 0, total: ids.length })
 
@@ -397,12 +393,49 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
     setQueryingInfo(false)
 
+    if (!showToast) {
+      return
+    }
+
     if (failCount === 0) {
       toast.success(`查询完成：成功 ${successCount}/${ids.length}`)
     } else {
       toast.warning(`查询完成：成功 ${successCount} 个，失败 ${failCount} 个`)
     }
   }
+
+  // 查询当前页凭据信息（逐个查询，避免瞬时并发）
+  const handleQueryCurrentPageInfo = async () => {
+    if (currentCredentials.length === 0) {
+      toast.error('当前页没有可查询的凭据')
+      return
+    }
+
+    const ids = currentCredentials
+      .filter(credential => !credential.disabled)
+      .map(credential => credential.id)
+
+    if (ids.length === 0) {
+      toast.error('当前页没有可查询的启用凭据')
+      return
+    }
+
+    await queryCredentialBalances(ids, true)
+  }
+
+  useEffect(() => {
+    const ids = currentCredentials
+      .filter(credential => !credential.disabled)
+      .map(credential => credential.id)
+      .filter(id => !autoQueriedBalanceIdsRef.current.has(id))
+
+    if (ids.length === 0) {
+      return
+    }
+
+    ids.forEach(id => autoQueriedBalanceIdsRef.current.add(id))
+    void queryCredentialBalances(ids, false)
+  }, [currentCredentials])
 
   // 批量验活
   const handleBatchVerify = async () => {
@@ -649,19 +682,20 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
         {/* 凭据列表 */}
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <h2 className="text-xl font-semibold">凭据管理</h2>
-              {selectedIds.size > 0 && (
-                <div className="flex items-center gap-2">
-                  <Badge variant="secondary">已选择 {selectedIds.size} 个</Badge>
-                  <Button onClick={deselectAll} size="sm" variant="ghost">
-                    取消选择
-                  </Button>
-                </div>
-              )}
-            </div>
-            <div className="flex gap-2">
+          <div className="rounded-lg border bg-card/70 p-3 shadow-sm">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex min-w-0 flex-wrap items-center gap-3">
+                <h2 className="shrink-0 text-xl font-semibold leading-none">凭据管理</h2>
+                {selectedIds.size > 0 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="secondary">已选择 {selectedIds.size} 个</Badge>
+                    <Button onClick={deselectAll} size="sm" variant="ghost">
+                      取消选择
+                    </Button>
+                  </div>
+                )}
+              </div>
+              <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:justify-end">
               {selectedIds.size > 0 && (
                 <>
                   <Button onClick={handleBatchVerify} size="sm" variant="outline">
@@ -735,6 +769,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 <Plus className="h-4 w-4 mr-2" />
                 添加凭据
               </Button>
+              </div>
             </div>
           </div>
           {data?.credentials.length === 0 ? (

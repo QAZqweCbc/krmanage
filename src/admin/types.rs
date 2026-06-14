@@ -2,6 +2,22 @@
 
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BootstrapKeysResponse {
+    pub api_key: String,
+    pub admin_api_key: String,
+}
+
+impl BootstrapKeysResponse {
+    pub fn new(api_key: impl Into<String>, admin_api_key: impl Into<String>) -> Self {
+        Self {
+            api_key: api_key.into(),
+            admin_api_key: admin_api_key.into(),
+        }
+    }
+}
+
 // ============ 凭据状态 ============
 
 /// 所有凭据状态响应
@@ -94,6 +110,14 @@ pub struct SetDisabledRequest {
 pub struct SetPriorityRequest {
     /// 新优先级值
     pub priority: u32,
+}
+
+/// 修改凭据邮箱请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetEmailRequest {
+    /// 用户邮箱；空字符串会清除邮箱
+    pub email: Option<String>,
 }
 
 /// 添加凭据请求
@@ -287,5 +311,18 @@ impl AdminErrorResponse {
 
     pub fn internal_error(message: impl Into<String>) -> Self {
         Self::new("internal_error", message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BootstrapKeysResponse;
+
+    #[test]
+    fn bootstrap_keys_response_keeps_runtime_keys() {
+        let response = BootstrapKeysResponse::new("service-key", "admin-key");
+
+        assert_eq!(response.api_key, "service-key");
+        assert_eq!(response.admin_api_key, "admin-key");
     }
 }

@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getCredentials,
   setCredentialDisabled,
+  setCredentialEmail,
   setCredentialPriority,
   resetCredentialFailure,
   forceRefreshToken,
@@ -52,6 +53,17 @@ export function useSetPriority() {
   return useMutation({
     mutationFn: ({ id, priority }: { id: number; priority: number }) =>
       setCredentialPriority(id, priority),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+    },
+  })
+}
+
+export function useSetEmail() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, email }: { id: number; email?: string }) =>
+      setCredentialEmail(id, email),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['credentials'] })
     },

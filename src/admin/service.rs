@@ -142,6 +142,13 @@ impl AdminService {
             .map_err(|e| self.classify_error(e, id))
     }
 
+    /// 设置凭据邮箱
+    pub fn set_email(&self, id: u64, email: Option<String>) -> Result<(), AdminServiceError> {
+        self.token_manager
+            .set_email(id, email)
+            .map_err(|e| self.classify_error(e, id))
+    }
+
     /// 重置失败计数并重新启用
     pub fn reset_and_enable(&self, id: u64) -> Result<(), AdminServiceError> {
         self.token_manager
