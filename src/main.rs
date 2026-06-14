@@ -35,10 +35,29 @@ async fn main() {
     let config_path = args
         .config
         .unwrap_or_else(|| Config::default_config_path().to_string());
-    let config = Config::load(&config_path).unwrap_or_else(|e| {
+    let mut config = Config::load(&config_path).unwrap_or_else(|e| {
         tracing::error!("加载配置失败: {}", e);
         std::process::exit(1);
     });
+    let startup_registration = config.ensure_startup_registration().unwrap_or_else(|e| {
+        tracing::error!("初始化启动注册配置失败: {}", e);
+        std::process::exit(1);
+    });
+    if startup_registration.created_api_key || startup_registration.created_admin_api_key {
+        tracing::info!("已完成启动注册，并写入配置文件: {}", config_path);
+        if startup_registration.created_api_key {
+            tracing::info!(
+                "已生成服务 API Key: {}",
+                mask_key(&startup_registration.api_key)
+            );
+        }
+        if startup_registration.created_admin_api_key {
+            tracing::info!(
+                "已生成 Admin API Key: {}",
+                mask_key(&startup_registration.admin_api_key)
+            );
+        }
+    }
 
     // 加载凭证（支持单对象或数组格式）
     let credentials_path = args
@@ -186,7 +205,8 @@ async fn main() {
             tracing::info!("Admin UI 已启用: /admin");
             anthropic_app
                 .nest("/api/admin", admin_app)
-                .nest("/admin", admin_ui_app)
+                .nest("/admin", admin_ui_app.clone())
+                .nest("/register", admin_ui_app)
         }
     } else {
         anthropic_app
@@ -195,7 +215,7 @@ async fn main() {
     // 启动服务器
     let addr = format!("{}:{}", config.host, config.port);
     tracing::info!("启动 Anthropic API 端点: {}", addr);
-    tracing::info!("API Key: {}***", &api_key[..(api_key.len() / 2)]);
+    tracing::info!("API Key: {}", mask_key(&api_key));
     tracing::info!("可用 API:");
     tracing::info!("  GET  /v1/models");
     tracing::info!("  POST /v1/messages");
@@ -213,4 +233,9 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+
+fn mask_key(key: &str) -> String {
+    let prefix: String = key.chars().take(12).collect();
+    format!("{}***", prefix)
 }

@@ -123,7 +123,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
   }
 
   const handleLogout = () => {
-    storage.removeApiKey()
+    storage.removeAdminApiKey()
     queryClient.clear()
     onLogout()
   }

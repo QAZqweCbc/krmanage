@@ -21,9 +21,9 @@ const api = axios.create({
 
 // 请求拦截器添加 API Key
 api.interceptors.request.use((config) => {
-  const apiKey = storage.getApiKey()
-  if (apiKey) {
-    config.headers['x-api-key'] = apiKey
+  const adminApiKey = storage.getAdminApiKey()
+  if (adminApiKey) {
+    config.headers['x-api-key'] = adminApiKey
   }
   return config
 })

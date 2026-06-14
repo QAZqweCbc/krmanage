@@ -9,7 +9,7 @@ function App() {
 
   useEffect(() => {
     // 检查是否已经有保存的 API Key
-    if (storage.getApiKey()) {
+    if (storage.getAdminApiKey()) {
       setIsLoggedIn(true)
     }
   }, [])
