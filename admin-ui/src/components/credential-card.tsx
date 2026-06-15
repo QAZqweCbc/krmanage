@@ -20,7 +20,6 @@ import type { CredentialStatusItem, BalanceResponse } from '@/types/api'
 import { formatTokenCountdown } from '@/lib/token-countdown'
 import {
   useSetDisabled,
-  useSetEmail,
   useSetPriority,
   useResetFailure,
   useDeleteCredential,
@@ -62,13 +61,10 @@ export function CredentialCard({
 }: CredentialCardProps) {
   const [editingPriority, setEditingPriority] = useState(false)
   const [priorityValue, setPriorityValue] = useState(String(credential.priority))
-  const [editingEmail, setEditingEmail] = useState(false)
-  const [emailValue, setEmailValue] = useState(credential.email || '')
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [currentTime, setCurrentTime] = useState(() => new Date())
 
   const setDisabled = useSetDisabled()
-  const setEmail = useSetEmail()
   const setPriority = useSetPriority()
   const resetFailure = useResetFailure()
   const deleteCredential = useDeleteCredential()
@@ -86,12 +82,6 @@ export function CredentialCard({
 
     return () => window.clearInterval(timer)
   }, [])
-
-  useEffect(() => {
-    if (!editingEmail) {
-      setEmailValue(credential.email || '')
-    }
-  }, [credential.email, editingEmail])
 
   const handleToggleDisabled = () => {
     setDisabled.mutate(
@@ -149,34 +139,7 @@ export function CredentialCard({
     })
   }
 
-  const handleEmailChange = () => {
-    const normalizedEmail = emailValue.trim()
-    if (normalizedEmail && !normalizedEmail.includes('@')) {
-      toast.error('邮箱格式不正确')
-      return
-    }
-
-    setEmail.mutate(
-      { id: credential.id, email: normalizedEmail || undefined },
-      {
-        onSuccess: (res) => {
-          toast.success(res.message)
-          setEditingEmail(false)
-        },
-        onError: (err) => {
-          toast.error('更新邮箱失败: ' + (err as Error).message)
-        },
-      }
-    )
-  }
-
   const handleDelete = () => {
-    if (!credential.disabled) {
-      toast.error('请先禁用凭据再删除')
-      setShowDeleteDialog(false)
-      return
-    }
-
     deleteCredential.mutate(credential.id, {
       onSuccess: (res) => {
         toast.success(res.message)
@@ -199,57 +162,7 @@ export function CredentialCard({
                 onCheckedChange={onToggleSelect}
               />
               <CardTitle className="text-lg flex items-center gap-2">
-                {editingEmail ? (
-                  <span className="flex items-center gap-1">
-                    <Input
-                      value={emailValue}
-                      onChange={(e) => setEmailValue(e.target.value)}
-                      className="h-7 w-44 text-sm"
-                      placeholder="邮箱名"
-                      autoFocus
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          handleEmailChange()
-                        }
-                        if (e.key === 'Escape') {
-                          setEditingEmail(false)
-                          setEmailValue(credential.email || '')
-                        }
-                      }}
-                    />
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 px-2 text-xs"
-                      onClick={handleEmailChange}
-                      disabled={setEmail.isPending}
-                    >
-                      保存
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 px-2 text-xs"
-                      onClick={() => {
-                        setEditingEmail(false)
-                        setEmailValue(credential.email || '')
-                      }}
-                    >
-                      取消
-                    </Button>
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-2">
-                    <span>{credential.email || `凭据 #${credential.id}`}</span>
-                    <button
-                      type="button"
-                      className="text-xs font-normal text-muted-foreground hover:text-foreground"
-                      onClick={() => setEditingEmail(true)}
-                    >
-                      {credential.email ? '编辑' : '编辑邮箱'}
-                    </button>
-                  </span>
-                )}
+                <span>{credential.email || `凭据 #${credential.id}`}</span>
                 {credential.isCurrent && (
                   <Badge variant="success">当前</Badge>
                 )}
@@ -353,14 +266,7 @@ export function CredentialCard({
             </div>
             <div className="col-span-2 flex items-center gap-2">
               <span className="text-muted-foreground">邮箱：</span>
-              <span className="font-medium">{credential.email || '未设置'}</span>
-              <button
-                type="button"
-                className="text-xs text-muted-foreground hover:text-foreground"
-                onClick={() => setEditingEmail(true)}
-              >
-                {credential.email ? '编辑' : '编辑邮箱'}
-              </button>
+              <span className="font-medium">{credential.email || '未获取'}</span>
             </div>
             <div className="col-span-2">
               <span className="text-muted-foreground">最后调用：</span>
@@ -486,8 +392,6 @@ export function CredentialCard({
               size="sm"
               variant="destructive"
               onClick={() => setShowDeleteDialog(true)}
-              disabled={!credential.disabled}
-              title={!credential.disabled ? '需要先禁用凭据才能删除' : undefined}
             >
               <Trash2 className="h-4 w-4 mr-1" />
               删除
@@ -516,7 +420,7 @@ export function CredentialCard({
             <Button
               variant="destructive"
               onClick={handleDelete}
-              disabled={deleteCredential.isPending || !credential.disabled}
+              disabled={deleteCredential.isPending}
             >
               确认删除
             </Button>
