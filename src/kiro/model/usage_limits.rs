@@ -19,6 +19,10 @@ pub struct UsageLimitsResponse {
     /// 使用量明细列表
     #[serde(default)]
     pub usage_breakdown_list: Vec<UsageBreakdown>,
+
+    /// 用户信息，额度接口在 isEmailRequired=true 时会返回邮箱
+    #[serde(default)]
+    pub user_info: Option<UsageUserInfo>,
 }
 
 /// 订阅信息
@@ -28,6 +32,15 @@ pub struct SubscriptionInfo {
     /// 订阅标题 (KIRO PRO+ / KIRO FREE 等)
     #[serde(default)]
     pub subscription_title: Option<String>,
+}
+
+/// 用户信息
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageUserInfo {
+    /// 用户邮箱
+    #[serde(default)]
+    pub email: Option<String>,
 }
 
 /// 使用量明细
@@ -141,6 +154,15 @@ impl UsageLimitsResponse {
             .and_then(|info| info.subscription_title.as_deref())
     }
 
+    /// 获取额度响应中的用户邮箱
+    pub fn email(&self) -> Option<&str> {
+        self.user_info
+            .as_ref()
+            .and_then(|info| info.email.as_deref())
+            .map(str::trim)
+            .filter(|email| !email.is_empty())
+    }
+
     /// 获取第一个使用量明细
     fn primary_breakdown(&self) -> Option<&UsageBreakdown> {
         self.usage_breakdown_list.first()
@@ -198,5 +220,29 @@ impl UsageLimitsResponse {
         }
 
         total
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UsageLimitsResponse;
+
+    #[test]
+    fn parses_email_from_usage_response_user_info() {
+        let response: UsageLimitsResponse = serde_json::from_str(
+            r#"{
+                "userInfo": {
+                    "email": "user@example.com",
+                    "userId": "user-1"
+                },
+                "subscriptionInfo": {
+                    "subscriptionTitle": "KIRO FREE"
+                },
+                "usageBreakdownList": []
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(response.email(), Some("user@example.com"));
     }
 }

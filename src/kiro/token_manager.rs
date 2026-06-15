@@ -338,7 +338,7 @@ pub(crate) async fn get_usage_limits(
 
     // 构建 URL
     let mut url = format!(
-        "https://{}/getUsageLimits?origin=AI_EDITOR&resourceType=AGENTIC_REQUEST",
+        "https://{}/getUsageLimits?origin=AI_EDITOR&resourceType=AGENTIC_REQUEST&isEmailRequired=true",
         host
     );
 
@@ -1804,6 +1804,56 @@ impl MultiTokenManager {
         Ok(())
     }
 
+    /// 应用额度接口返回的用户元数据
+    fn apply_usage_metadata(
+        &self,
+        id: u64,
+        email: Option<&str>,
+        subscription_title: Option<&str>,
+    ) -> bool {
+        let normalized_email = email
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let normalized_title = subscription_title
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+
+        let mut entries = self.entries.lock();
+        let Some(entry) = entries.iter_mut().find(|e| e.id == id) else {
+            return false;
+        };
+
+        let mut changed = false;
+
+        if let Some(email) = normalized_email {
+            if entry.credentials.email.as_deref() != Some(email.as_str()) {
+                let old_email = entry.credentials.email.clone();
+                entry.credentials.email = Some(email.clone());
+                tracing::info!("凭据 #{} 邮箱已更新 {:?} -> {}", id, old_email, email);
+                changed = true;
+            }
+        }
+
+        if let Some(subscription_title) = normalized_title {
+            if entry.credentials.subscription_title.as_deref() != Some(subscription_title.as_str())
+            {
+                let old_title = entry.credentials.subscription_title.clone();
+                entry.credentials.subscription_title = Some(subscription_title.clone());
+                tracing::info!(
+                    "凭据 #{} 订阅等级已更新 {:?} -> {}",
+                    id,
+                    old_title,
+                    subscription_title
+                );
+                changed = true;
+            }
+        }
+
+        changed
+    }
+
     /// 重置凭据失败计数并重新启用（Admin API）
     pub fn reset_and_enable(&self, id: u64) -> anyhow::Result<()> {
         {
@@ -1902,33 +1952,10 @@ impl MultiTokenManager {
         let usage_limits =
             get_usage_limits(&credentials, &self.config, &token, effective_proxy.as_ref()).await?;
 
-        // 更新订阅等级到凭据（仅在发生变化时持久化）
-        if let Some(subscription_title) = usage_limits.subscription_title() {
-            let changed = {
-                let mut entries = self.entries.lock();
-                if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
-                    let old_title = entry.credentials.subscription_title.clone();
-                    if old_title.as_deref() != Some(subscription_title) {
-                        entry.credentials.subscription_title = Some(subscription_title.to_string());
-                        tracing::info!(
-                            "凭据 #{} 订阅等级已更新: {:?} -> {}",
-                            id,
-                            old_title,
-                            subscription_title
-                        );
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            };
-
-            if changed {
-                if let Err(e) = self.persist_credentials() {
-                    tracing::warn!("订阅等级更新后持久化失败（不影响本次请求）: {}", e);
-                }
+        // 更新额度接口返回的邮箱和订阅等级（仅在发生变化时持久化）
+        if self.apply_usage_metadata(id, usage_limits.email(), usage_limits.subscription_title()) {
+            if let Err(e) = self.persist_credentials() {
+                tracing::warn!("额度元数据更新后持久化失败（不影响本次请求）: {}", e);
             }
         }
 
@@ -2073,33 +2100,23 @@ impl MultiTokenManager {
 
     /// 删除凭据（Admin API）
     ///
-    /// # 前置条件
-    /// - 凭据必须已禁用（disabled = true）
-    ///
     /// # 行为
     /// 1. 验证凭据存在
-    /// 2. 验证凭据已禁用
-    /// 3. 从 entries 移除
-    /// 4. 如果删除的是当前凭据，切换到优先级最高的可用凭据
-    /// 5. 如果删除后没有凭据，将 current_id 重置为 0
-    /// 6. 持久化到文件
+    /// 2. 从 entries 移除
+    /// 3. 如果删除的是当前凭据，切换到优先级最高的可用凭据
+    /// 4. 如果删除后没有凭据，将 current_id 重置为 0
+    /// 5. 持久化到文件
     ///
     /// # 返回
     /// - `Ok(())` - 删除成功
-    /// - `Err(_)` - 凭据不存在、未禁用或持久化失败
+    /// - `Err(_)` - 凭据不存在或持久化失败
     pub fn delete_credential(&self, id: u64) -> anyhow::Result<()> {
         let was_current = {
             let mut entries = self.entries.lock();
 
-            // 查找凭据
-            let entry = entries
-                .iter()
-                .find(|e| e.id == id)
-                .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?;
-
-            // 检查是否已禁用
-            if !entry.disabled {
-                anyhow::bail!("只能删除已禁用的凭据（请先禁用凭据 #{}）", id);
+            // 确认凭据存在
+            if !entries.iter().any(|e| e.id == id) {
+                anyhow::bail!("凭据不存在: {}", id);
             }
 
             // 记录是否是当前凭据
@@ -2504,6 +2521,33 @@ mod tests {
             .find(|e| e.id == 1)
             .unwrap();
         assert_eq!(first.email, Some("user@example.com".to_string()));
+    }
+
+    #[test]
+    fn test_apply_usage_metadata_updates_missing_email() {
+        let manager = manager_with_api_keys();
+
+        let changed = manager.apply_usage_metadata(1, Some("user@example.com"), Some("KIRO FREE"));
+
+        assert!(changed);
+        let first = manager
+            .snapshot()
+            .entries
+            .into_iter()
+            .find(|e| e.id == 1)
+            .unwrap();
+        assert_eq!(first.email, Some("user@example.com".to_string()));
+    }
+
+    #[test]
+    fn test_delete_credential_allows_enabled_credential() {
+        let manager = manager_with_api_keys();
+
+        manager.delete_credential(1).unwrap();
+
+        let snapshot = manager.snapshot();
+        assert_eq!(snapshot.entries.len(), 1);
+        assert!(snapshot.entries.iter().all(|entry| entry.id != 1));
     }
 
     fn oauth_credential(id: u64, priority: u32) -> KiroCredentials {

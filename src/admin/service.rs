@@ -33,6 +33,27 @@ struct CachedBalance {
     data: BalanceResponse,
 }
 
+impl CachedBalance {
+    fn is_valid_at(&self, now: f64) -> bool {
+        if (now - self.cached_at) < BALANCE_CACHE_TTL_SECS as f64 {
+            return true;
+        }
+
+        self.is_full_quota()
+            && self
+                .data
+                .next_reset_at
+                .is_some_and(|reset_at| now < reset_at)
+    }
+
+    fn is_full_quota(&self) -> bool {
+        self.data.usage_limit > 0.0
+            && (self.data.remaining <= 0.0
+                || self.data.current_usage >= self.data.usage_limit
+                || self.data.usage_percentage >= 100.0)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct GithubReleaseResponse {
     tag_name: String,
@@ -163,7 +184,7 @@ impl AdminService {
             let cache = self.balance_cache.lock();
             if let Some(cached) = cache.get(&id) {
                 let now = Utc::now().timestamp() as f64;
-                if (now - cached.cached_at) < BALANCE_CACHE_TTL_SECS as f64 {
+                if cached.is_valid_at(now) {
                     tracing::debug!("凭据 #{} 余额命中缓存", id);
                     return Ok(cached.data.clone());
                 }
@@ -400,8 +421,8 @@ impl AdminService {
         map.into_iter()
             .filter_map(|(k, v)| {
                 let id = k.parse::<u64>().ok()?;
-                // 丢弃超过 TTL 的条目
-                if (now - v.cached_at) < BALANCE_CACHE_TTL_SECS as f64 {
+                // 普通余额按 TTL 丢弃，满额余额保留到重置时间。
+                if v.is_valid_at(now) {
                     Some((id, v))
                 } else {
                     None
@@ -530,9 +551,6 @@ impl AdminService {
         let msg = e.to_string();
         if msg.contains("不存在") {
             AdminServiceError::NotFound { id }
-        } else if msg.contains("只能删除已禁用的凭据") || msg.contains("请先禁用凭据")
-        {
-            AdminServiceError::InvalidCredential(msg)
         } else {
             AdminServiceError::InternalError(msg)
         }
@@ -559,4 +577,49 @@ fn parse_version_parts(version: &str) -> Vec<u64> {
         .filter(|part| !part.is_empty())
         .map(|part| part.parse::<u64>().unwrap_or(0))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cached_balance(
+        cached_at: f64,
+        current_usage: f64,
+        usage_limit: f64,
+        next_reset_at: Option<f64>,
+    ) -> CachedBalance {
+        CachedBalance {
+            cached_at,
+            data: BalanceResponse {
+                id: 1,
+                subscription_title: Some("KIRO FREE".to_string()),
+                current_usage,
+                usage_limit,
+                remaining: (usage_limit - current_usage).max(0.0),
+                usage_percentage: if usage_limit > 0.0 {
+                    (current_usage / usage_limit * 100.0).min(100.0)
+                } else {
+                    0.0
+                },
+                next_reset_at,
+            },
+        }
+    }
+
+    #[test]
+    fn full_quota_cache_stays_valid_until_reset_after_ttl() {
+        let cached = cached_balance(1_000.0, 50.0, 50.0, Some(10_000.0));
+
+        assert!(cached.is_valid_at(2_000.0));
+        assert!(!cached.is_valid_at(10_001.0));
+    }
+
+    #[test]
+    fn non_full_quota_cache_expires_by_normal_ttl() {
+        let cached = cached_balance(1_000.0, 25.0, 50.0, Some(10_000.0));
+
+        assert!(cached.is_valid_at(1_100.0));
+        assert!(!cached.is_valid_at(2_000.0));
+    }
 }
